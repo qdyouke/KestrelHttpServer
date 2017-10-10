@@ -257,8 +257,8 @@ namespace Microsoft.AspNetCore.Server.Kestrel.FunctionalTests
                 {
                     return Task.CompletedTask;
                 },
-                expectedClientStatusCode: null,
-                expectedServerStatusCode: HttpStatusCode.BadRequest,
+                expectedClientStatusCode: HttpStatusCode.OK,
+                expectedServerStatusCode: HttpStatusCode.OK,
                 sendMalformedRequest: true);
         }
 
@@ -289,8 +289,8 @@ namespace Microsoft.AspNetCore.Server.Kestrel.FunctionalTests
                     {
                     }
                 },
-                expectedClientStatusCode: null,
-                expectedServerStatusCode: HttpStatusCode.BadRequest,
+                expectedClientStatusCode: HttpStatusCode.OK,
+                expectedServerStatusCode: HttpStatusCode.OK,
                 sendMalformedRequest: true);
         }
 
@@ -342,13 +342,25 @@ namespace Microsoft.AspNetCore.Server.Kestrel.FunctionalTests
                             "Transfer-Encoding: chunked",
                             "",
                             "gg");
-                        await connection.ReceiveForcedEnd(
-                            "HTTP/1.1 400 Bad Request",
-                            "Connection: close",
-                            $"Date: {server.Context.DateHeaderValue}",
-                            "Content-Length: 0",
-                            "",
-                            "");
+                        if (expectedClientStatusCode == HttpStatusCode.OK)
+                        {
+                            await connection.ReceiveForcedEnd(
+                                "HTTP/1.1 200 OK",
+                                $"Date: {server.Context.DateHeaderValue}",
+                                "Content-Length: 0",
+                                "",
+                                "");
+                        }
+                        else
+                        {
+                            await connection.ReceiveForcedEnd(
+                                "HTTP/1.1 400 Bad Request",
+                                "Connection: close",
+                                $"Date: {server.Context.DateHeaderValue}",
+                                "Content-Length: 0",
+                                "",
+                                "");
+                        }
                     }
                 }
 
@@ -359,7 +371,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.FunctionalTests
 
         // https://github.com/aspnet/KestrelHttpServer/pull/1111/files#r80584475 explains the reason for this test.
         [Fact]
-        public async Task SingleErrorResponseSentWhenAppSwallowsBadRequestException()
+        public async Task NoErrorResponseSentWhenAppSwallowsBadRequestException()
         {
             BadHttpRequestException readException = null;
 
@@ -378,8 +390,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.FunctionalTests
                         "",
                         "gg");
                     await connection.ReceiveForcedEnd(
-                        "HTTP/1.1 400 Bad Request",
-                        "Connection: close",
+                        "HTTP/1.1 200 OK",
                         $"Date: {server.Context.DateHeaderValue}",
                         "Content-Length: 0",
                         "",
@@ -1474,7 +1485,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.FunctionalTests
         }
 
         [Fact]
-        public async Task WhenResponseNotStartedResponseEndedAfterConsumingRequestBody()
+        public async Task WhenResponseNotStartedResponseEndedBeforeConsumingRequestBody()
         {
             using (var server = new TestServer(httpContext => Task.CompletedTask))
             {
@@ -1487,12 +1498,11 @@ namespace Microsoft.AspNetCore.Server.Kestrel.FunctionalTests
                         "",
                         "gg");
 
-                    // If the expected behavior is regressed, this will receive
-                    // a success response because the server flushed the response
-                    // before reading the malformed chunk header in the request.
+                    // This will receive a success response because the server flushed the response
+                    // before reading the malformed chunk header in the request, but then it will close
+                    // the connection.
                     await connection.ReceiveForcedEnd(
-                        "HTTP/1.1 400 Bad Request",
-                        "Connection: close",
+                        "HTTP/1.1 200 OK",
                         $"Date: {server.Context.DateHeaderValue}",
                         "Content-Length: 0",
                         "",
@@ -1530,6 +1540,13 @@ namespace Microsoft.AspNetCore.Server.Kestrel.FunctionalTests
                         "a",
                         "");
 
+                    await connection.Receive(
+                        "HTTP/1.1 200 OK",
+                        $"Date: {server.Context.DateHeaderValue}",
+                        "Content-Length: 0",
+                        "",
+                        "");
+
                     // This will be consumed by Http1Connection when it attempts to
                     // consume the request body and will cause an error.
                     await connection.Send(
@@ -1538,13 +1555,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.FunctionalTests
                     // If 100 Continue sets HttpProtocol.HasResponseStarted to true,
                     // a success response will be produced before the server sees the
                     // bad chunk header above, making this test fail.
-                    await connection.ReceiveForcedEnd(
-                        "HTTP/1.1 400 Bad Request",
-                        "Connection: close",
-                        $"Date: {server.Context.DateHeaderValue}",
-                        "Content-Length: 0",
-                        "",
-                        "");
+                    await connection.ReceiveEnd();
                 }
             }
         }
